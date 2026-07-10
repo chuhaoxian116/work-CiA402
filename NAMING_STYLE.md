@@ -585,45 +585,29 @@ class Homing {
 #endif  // CIA402_CIA402_H_
 ```
 
-## 15. 当前代码迁移建议
+## 15. 当前代码状态
 
-当前代码里还存在 C ABI 风格：
-
-```text
-cia402_get_axis_state()
-cia402_power_axis()
-cia402_axis_input_t
-```
-
-以及 C++ wrapper 风格：
+当前代码已按本文档迁移为 C++ 主接口：
 
 ```text
-get_axis_state()
-power_axis()
-AxisStatus
+GetAxisState()
+GetAxisHomingState()
+PowerAxis::Update()
+ClearAxisError::Update()
+SwitchMode::Update()
+Homing::Update()
 ```
 
-如果决定采用本文档规则，下一步建议统一迁移为：
+当前公开头文件为：
 
 ```text
-cia402_get_axis_state()      -> GetAxisState()
-cia402_get_axis_homing_state -> GetAxisHomingState()
-cia402_power_axis()          -> PowerAxis::Update()
-cia402_clear_axis_error()    -> ClearAxisError::Update()
-cia402_switch_mode()         -> SwitchMode::Update()
-cia402_homing()              -> Homing::Update()
+include/cia402/cia402.h
 ```
 
-并且把：
+目前不再提供 C ABI。如果后续需要给 C、Python、C#、LabVIEW 等跨语言调用，建议新增独立文件：
 
 ```text
-modeDisplay
+include/cia402/cia402_c.h
 ```
 
-统一改为：
-
-```text
-mode_display
-```
-
-如果还需要 C ABI，建议拆到 `cia402_c.h`；如果只面向 C++，可以删除 C ABI。
+不要把 C ABI 和 C++ 主接口混在一个头文件里。

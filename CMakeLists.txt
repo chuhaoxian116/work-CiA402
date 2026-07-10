@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(cia402
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Generic CiA 402 helper library"
-    LANGUAGES C CXX
+    LANGUAGES CXX
 )
 
 option(CIA402_BUILD_SHARED "Build cia402 as a shared library" ON)
@@ -31,15 +31,11 @@ target_include_directories(cia402
         $<INSTALL_INTERFACE:include>
 )
 
-target_compile_definitions(cia402
-    PRIVATE CIA402_BUILDING_LIBRARY
-)
-
 set_target_properties(cia402 PROPERTIES
     OUTPUT_NAME cia402
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    PUBLIC_HEADER "include/cia402/cia402.h;include/cia402/cia402.hpp"
+    PUBLIC_HEADER "include/cia402/cia402.h"
 )
 
 if(CIA402_BUILD_EXAMPLES)

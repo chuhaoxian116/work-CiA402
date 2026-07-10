@@ -1,351 +1,305 @@
 #include "cia402/cia402.h"
 
+namespace cia402 {
 namespace {
 
-bool is_null(const cia402_axis_input_t *input) {
-    return input == nullptr;
+constexpr uint16_t kControlwordHomingStartBit = 0x0010;
+
+constexpr uint16_t kStatuswordFaultBit = 0x0008;
+constexpr uint16_t kStatuswordWarningBit = 0x0080;
+constexpr uint16_t kStatuswordRemoteBit = 0x0200;
+constexpr uint16_t kStatuswordTargetReachedBit = 0x0400;
+constexpr uint16_t kStatuswordHomingAttainedBit = 0x1000;
+constexpr uint16_t kStatuswordHomingErrorBit = 0x2000;
+
+constexpr uint16_t kControlwordDisableVoltage = 0x0000;
+constexpr uint16_t kControlwordShutdown = 0x0006;
+constexpr uint16_t kControlwordSwitchOn = 0x0007;
+constexpr uint16_t kControlwordEnableOperation = 0x000F;
+constexpr uint16_t kControlwordDisableOperation = 0x0007;
+constexpr uint16_t kControlwordFaultReset = 0x0080;
+
+uint16_t ClearHomingStart(uint16_t controlword) {
+  return static_cast<uint16_t>(controlword & ~kControlwordHomingStartBit);
 }
 
-bool is_null(const cia402_axis_output_t *output) {
-    return output == nullptr;
-}
-
-uint16_t clear_homing_start(uint16_t controlword) {
-    return static_cast<uint16_t>(controlword & ~CIA402_CW_HOMING_START);
-}
-
-uint16_t set_homing_start(uint16_t controlword) {
-    return static_cast<uint16_t>(controlword | CIA402_CW_HOMING_START);
+uint16_t SetHomingStart(uint16_t controlword) {
+  return static_cast<uint16_t>(controlword | kControlwordHomingStartBit);
 }
 
 }  // namespace
 
-extern "C" {
-
-const char *cia402_version(void) {
-    return "0.2.0";
+const char* Version() {
+  return "0.3.0";
 }
 
-cia402_axis_state_t cia402_get_axis_state(
-    const cia402_axis_input_t *input) {
-    if (is_null(input)) {
-        return CIA402_AXIS_STATE_UNKNOWN;
-    }
-    return cia402_get_axis_state_from_statusword(input->statusword);
+AxisState GetAxisState(const AxisInput& input) {
+  return GetAxisStateFromStatusword(input.statusword);
 }
 
-cia402_axis_state_t cia402_get_axis_state_from_statusword(
-    uint16_t statusword) {
-    const uint16_t masked = statusword & 0x006F;
+AxisState GetAxisStateFromStatusword(uint16_t statusword) {
+  const uint16_t masked = statusword & 0x006F;
 
-    if (masked == 0x0000) {
-        return CIA402_AXIS_STATE_NOT_READY_TO_SWITCH_ON;
-    }
-    if ((statusword & 0x004F) == 0x0040) {
-        return CIA402_AXIS_STATE_SWITCH_ON_DISABLED;
-    }
-    if (masked == 0x0021) {
-        return CIA402_AXIS_STATE_READY_TO_SWITCH_ON;
-    }
-    if (masked == 0x0023) {
-        return CIA402_AXIS_STATE_SWITCHED_ON;
-    }
-    if (masked == 0x0027) {
-        return CIA402_AXIS_STATE_OPERATION_ENABLED;
-    }
-    if (masked == 0x0007) {
-        return CIA402_AXIS_STATE_QUICK_STOP_ACTIVE;
-    }
-    if ((statusword & 0x004F) == 0x000F) {
-        return CIA402_AXIS_STATE_FAULT_REACTION_ACTIVE;
-    }
-    if ((statusword & 0x004F) == 0x0008) {
-        return CIA402_AXIS_STATE_FAULT;
-    }
+  if (masked == 0x0000) {
+    return AxisState::kNotReadyToSwitchOn;
+  }
+  if ((statusword & 0x004F) == 0x0040) {
+    return AxisState::kSwitchOnDisabled;
+  }
+  if (masked == 0x0021) {
+    return AxisState::kReadyToSwitchOn;
+  }
+  if (masked == 0x0023) {
+    return AxisState::kSwitchedOn;
+  }
+  if (masked == 0x0027) {
+    return AxisState::kOperationEnabled;
+  }
+  if (masked == 0x0007) {
+    return AxisState::kQuickStopActive;
+  }
+  if ((statusword & 0x004F) == 0x000F) {
+    return AxisState::kFaultReactionActive;
+  }
+  if ((statusword & 0x004F) == 0x0008) {
+    return AxisState::kFault;
+  }
 
-    return CIA402_AXIS_STATE_UNKNOWN;
+  return AxisState::kUnknown;
 }
 
-cia402_axis_homing_state_t cia402_get_axis_homing_state(
-    const cia402_axis_input_t *input) {
-    if (is_null(input)) {
-        return CIA402_AXIS_HOMING_STATE_UNKNOWN;
-    }
-    if (input->mode_display != CIA402_AXIS_MODE_HOMING) {
-        return CIA402_AXIS_HOMING_STATE_NOT_HOMING_MODE;
-    }
-    if ((input->statusword & CIA402_SW_HOMING_ERROR) != 0) {
-        return CIA402_AXIS_HOMING_STATE_ERROR;
-    }
-    if ((input->statusword & CIA402_SW_HOMING_ATTAINED) != 0) {
-        return CIA402_AXIS_HOMING_STATE_ATTAINED;
-    }
-    if ((input->statusword & CIA402_SW_TARGET_REACHED) == 0) {
-        return CIA402_AXIS_HOMING_STATE_RUNNING;
-    }
-    return CIA402_AXIS_HOMING_STATE_NOT_STARTED;
+AxisHomingState GetAxisHomingState(const AxisInput& input) {
+  if (input.mode_display != static_cast<int8_t>(AxisMode::kHoming)) {
+    return AxisHomingState::kNotHomingMode;
+  }
+  if ((input.statusword & kStatuswordHomingErrorBit) != 0) {
+    return AxisHomingState::kError;
+  }
+  if ((input.statusword & kStatuswordHomingAttainedBit) != 0) {
+    return AxisHomingState::kAttained;
+  }
+  if ((input.statusword & kStatuswordTargetReachedBit) == 0) {
+    return AxisHomingState::kRunning;
+  }
+  return AxisHomingState::kNotStarted;
 }
 
-const char *cia402_axis_state_name(cia402_axis_state_t state) {
-    switch (state) {
-        case CIA402_AXIS_STATE_NOT_READY_TO_SWITCH_ON:
-            return "Not ready to switch on";
-        case CIA402_AXIS_STATE_SWITCH_ON_DISABLED:
-            return "Switch on disabled";
-        case CIA402_AXIS_STATE_READY_TO_SWITCH_ON:
-            return "Ready to switch on";
-        case CIA402_AXIS_STATE_SWITCHED_ON:
-            return "Switched on";
-        case CIA402_AXIS_STATE_OPERATION_ENABLED:
-            return "Operation enabled";
-        case CIA402_AXIS_STATE_QUICK_STOP_ACTIVE:
-            return "Quick stop active";
-        case CIA402_AXIS_STATE_FAULT_REACTION_ACTIVE:
-            return "Fault reaction active";
-        case CIA402_AXIS_STATE_FAULT:
-            return "Fault";
-        case CIA402_AXIS_STATE_UNKNOWN:
-        default:
-            return "Unknown";
-    }
+const char* ToString(AxisMode mode) {
+  switch (mode) {
+    case AxisMode::kNone:
+      return "No mode";
+    case AxisMode::kProfilePosition:
+      return "Profile position";
+    case AxisMode::kVelocity:
+      return "Velocity";
+    case AxisMode::kProfileVelocity:
+      return "Profile velocity";
+    case AxisMode::kProfileTorque:
+      return "Profile torque";
+    case AxisMode::kHoming:
+      return "Homing";
+    case AxisMode::kInterpolatedPosition:
+      return "Interpolated position";
+    case AxisMode::kCyclicSyncPosition:
+      return "Cyclic synchronous position";
+    case AxisMode::kCyclicSyncVelocity:
+      return "Cyclic synchronous velocity";
+    case AxisMode::kCyclicSyncTorque:
+      return "Cyclic synchronous torque";
+  }
+
+  return "Unknown mode";
 }
 
-const char *cia402_axis_mode_name(cia402_axis_mode_t mode) {
-    switch (mode) {
-        case CIA402_AXIS_MODE_NONE:
-            return "No mode";
-        case CIA402_AXIS_MODE_PROFILE_POSITION:
-            return "Profile position";
-        case CIA402_AXIS_MODE_VELOCITY:
-            return "Velocity";
-        case CIA402_AXIS_MODE_PROFILE_VELOCITY:
-            return "Profile velocity";
-        case CIA402_AXIS_MODE_PROFILE_TORQUE:
-            return "Profile torque";
-        case CIA402_AXIS_MODE_HOMING:
-            return "Homing";
-        case CIA402_AXIS_MODE_INTERPOLATED_POSITION:
-            return "Interpolated position";
-        case CIA402_AXIS_MODE_CYCLIC_SYNC_POSITION:
-            return "Cyclic synchronous position";
-        case CIA402_AXIS_MODE_CYCLIC_SYNC_VELOCITY:
-            return "Cyclic synchronous velocity";
-        case CIA402_AXIS_MODE_CYCLIC_SYNC_TORQUE:
-            return "Cyclic synchronous torque";
-        default:
-            return "Unknown mode";
-    }
+const char* ToString(AxisState state) {
+  switch (state) {
+    case AxisState::kNotReadyToSwitchOn:
+      return "Not ready to switch on";
+    case AxisState::kSwitchOnDisabled:
+      return "Switch on disabled";
+    case AxisState::kReadyToSwitchOn:
+      return "Ready to switch on";
+    case AxisState::kSwitchedOn:
+      return "Switched on";
+    case AxisState::kOperationEnabled:
+      return "Operation enabled";
+    case AxisState::kQuickStopActive:
+      return "Quick stop active";
+    case AxisState::kFaultReactionActive:
+      return "Fault reaction active";
+    case AxisState::kFault:
+      return "Fault";
+    case AxisState::kUnknown:
+      return "Unknown";
+  }
+
+  return "Unknown";
 }
 
-const char *cia402_axis_homing_state_name(
-    cia402_axis_homing_state_t state) {
-    switch (state) {
-        case CIA402_AXIS_HOMING_STATE_NOT_HOMING_MODE:
-            return "Not homing mode";
-        case CIA402_AXIS_HOMING_STATE_NOT_STARTED:
-            return "Not started";
-        case CIA402_AXIS_HOMING_STATE_RUNNING:
-            return "Running";
-        case CIA402_AXIS_HOMING_STATE_ATTAINED:
-            return "Attained";
-        case CIA402_AXIS_HOMING_STATE_ERROR:
-            return "Error";
-        case CIA402_AXIS_HOMING_STATE_UNKNOWN:
-        default:
-            return "Unknown";
-    }
+const char* ToString(AxisHomingState state) {
+  switch (state) {
+    case AxisHomingState::kNotHomingMode:
+      return "Not homing mode";
+    case AxisHomingState::kNotStarted:
+      return "Not started";
+    case AxisHomingState::kRunning:
+      return "Running";
+    case AxisHomingState::kAttained:
+      return "Attained";
+    case AxisHomingState::kError:
+      return "Error";
+    case AxisHomingState::kUnknown:
+      return "Unknown";
+  }
+
+  return "Unknown";
 }
 
-const char *cia402_fb_status_name(cia402_fb_status_t status) {
-    switch (status) {
-        case CIA402_FB_STATUS_DONE:
-            return "Done";
-        case CIA402_FB_STATUS_BUSY:
-            return "Busy";
-        case CIA402_FB_STATUS_ERROR:
-        default:
-            return "Error";
-    }
+const char* ToString(FbStatus status) {
+  switch (status) {
+    case FbStatus::kDone:
+      return "Done";
+    case FbStatus::kBusy:
+      return "Busy";
+    case FbStatus::kError:
+      return "Error";
+  }
+
+  return "Error";
 }
 
-int cia402_is_fault(const cia402_axis_input_t *input) {
-    return !is_null(input) && ((input->statusword & CIA402_SW_FAULT) != 0);
+bool IsFault(const AxisInput& input) {
+  return (input.statusword & kStatuswordFaultBit) != 0;
 }
 
-int cia402_is_warning(const cia402_axis_input_t *input) {
-    return !is_null(input) && ((input->statusword & CIA402_SW_WARNING) != 0);
+bool IsWarning(const AxisInput& input) {
+  return (input.statusword & kStatuswordWarningBit) != 0;
 }
 
-int cia402_is_remote(const cia402_axis_input_t *input) {
-    return !is_null(input) && ((input->statusword & CIA402_SW_REMOTE) != 0);
+bool IsRemote(const AxisInput& input) {
+  return (input.statusword & kStatuswordRemoteBit) != 0;
 }
 
-int cia402_is_operation_enabled(const cia402_axis_input_t *input) {
-    return cia402_get_axis_state(input) ==
-           CIA402_AXIS_STATE_OPERATION_ENABLED;
+bool IsOperationEnabled(const AxisInput& input) {
+  return GetAxisState(input) == AxisState::kOperationEnabled;
 }
 
-int cia402_is_target_reached(const cia402_axis_input_t *input) {
-    return !is_null(input) &&
-           ((input->statusword & CIA402_SW_TARGET_REACHED) != 0);
+bool IsTargetReached(const AxisInput& input) {
+  return (input.statusword & kStatuswordTargetReachedBit) != 0;
 }
 
-int cia402_is_mode_reached(const cia402_axis_input_t *input,
-                           cia402_axis_mode_t target_mode) {
-    return !is_null(input) && input->mode_display == target_mode;
+bool IsModeReached(const AxisInput& input, AxisMode target_mode) {
+  return input.mode_display == static_cast<int8_t>(target_mode);
 }
 
-uint16_t cia402_controlword_disable_voltage(void) {
-    return 0x0000;
+FbStatus PowerAxis::Update(const AxisInput& input,
+                           AxisOutput& output,
+                           bool enable) {
+  const AxisState state = GetAxisState(input);
+
+  if (!enable) {
+    output.controlword = kControlwordDisableOperation;
+    return state == AxisState::kOperationEnabled ? FbStatus::kBusy
+                                                 : FbStatus::kDone;
+  }
+
+  if (state == AxisState::kFault ||
+      state == AxisState::kFaultReactionActive) {
+    return FbStatus::kError;
+  }
+
+  switch (state) {
+    case AxisState::kSwitchOnDisabled:
+      output.controlword = kControlwordShutdown;
+      return FbStatus::kBusy;
+    case AxisState::kReadyToSwitchOn:
+      output.controlword = kControlwordSwitchOn;
+      return FbStatus::kBusy;
+    case AxisState::kSwitchedOn:
+      output.controlword = kControlwordEnableOperation;
+      return FbStatus::kBusy;
+    case AxisState::kOperationEnabled:
+      output.controlword = kControlwordEnableOperation;
+      return FbStatus::kDone;
+    case AxisState::kQuickStopActive:
+      output.controlword = kControlwordDisableOperation;
+      return FbStatus::kBusy;
+    case AxisState::kNotReadyToSwitchOn:
+    case AxisState::kUnknown:
+    case AxisState::kFaultReactionActive:
+    case AxisState::kFault:
+      output.controlword = kControlwordDisableVoltage;
+      return FbStatus::kBusy;
+  }
+
+  output.controlword = kControlwordDisableVoltage;
+  return FbStatus::kBusy;
 }
 
-uint16_t cia402_controlword_shutdown(void) {
-    return 0x0006;
+FbStatus ClearAxisError::Update(const AxisInput& input, AxisOutput& output) {
+  const AxisState state = GetAxisState(input);
+
+  if (state == AxisState::kFault) {
+    output.controlword = kControlwordFaultReset;
+    return FbStatus::kBusy;
+  }
+  if (state == AxisState::kFaultReactionActive) {
+    output.controlword = kControlwordDisableVoltage;
+    return FbStatus::kBusy;
+  }
+
+  output.controlword = kControlwordDisableVoltage;
+  return FbStatus::kDone;
 }
 
-uint16_t cia402_controlword_switch_on(void) {
-    return 0x0007;
+FbStatus SwitchMode::Update(const AxisInput& input,
+                            AxisOutput& output,
+                            AxisMode target_mode) {
+  output.mode = static_cast<int8_t>(target_mode);
+
+  if (IsModeReached(input, target_mode)) {
+    return FbStatus::kDone;
+  }
+  return FbStatus::kBusy;
 }
 
-uint16_t cia402_controlword_enable_operation(void) {
-    return 0x000F;
+FbStatus Homing::Update(const AxisInput& input,
+                        AxisOutput& output,
+                        bool start) {
+  output.mode = static_cast<int8_t>(AxisMode::kHoming);
+
+  if (!start) {
+    output.controlword = ClearHomingStart(output.controlword);
+    return FbStatus::kDone;
+  }
+
+  const AxisHomingState homing_state = GetAxisHomingState(input);
+  if (homing_state == AxisHomingState::kError) {
+    output.controlword = ClearHomingStart(output.controlword);
+    return FbStatus::kError;
+  }
+  if (homing_state == AxisHomingState::kAttained) {
+    output.controlword = ClearHomingStart(kControlwordEnableOperation);
+    return FbStatus::kDone;
+  }
+
+  if (!IsModeReached(input, AxisMode::kHoming)) {
+    output.controlword = ClearHomingStart(output.controlword);
+    return FbStatus::kBusy;
+  }
+
+  PowerAxis power_axis;
+  const FbStatus power_status = power_axis.Update(input, output, true);
+  if (power_status == FbStatus::kError) {
+    return FbStatus::kError;
+  }
+  if (power_status == FbStatus::kBusy) {
+    output.controlword = ClearHomingStart(output.controlword);
+    return FbStatus::kBusy;
+  }
+
+  output.controlword = SetHomingStart(output.controlword);
+  return FbStatus::kBusy;
 }
 
-uint16_t cia402_controlword_disable_operation(void) {
-    return 0x0007;
-}
-
-uint16_t cia402_controlword_quick_stop(void) {
-    return 0x0002;
-}
-
-uint16_t cia402_controlword_fault_reset(void) {
-    return 0x0080;
-}
-
-cia402_fb_status_t cia402_power_axis(const cia402_axis_input_t *input,
-                                     cia402_axis_output_t *output,
-                                     int enable) {
-    if (is_null(input) || is_null(output)) {
-        return CIA402_FB_STATUS_ERROR;
-    }
-
-    const cia402_axis_state_t state = cia402_get_axis_state(input);
-
-    if (!enable) {
-        output->controlword = cia402_controlword_disable_operation();
-        return state == CIA402_AXIS_STATE_OPERATION_ENABLED
-                   ? CIA402_FB_STATUS_BUSY
-                   : CIA402_FB_STATUS_DONE;
-    }
-
-    if (state == CIA402_AXIS_STATE_FAULT ||
-        state == CIA402_AXIS_STATE_FAULT_REACTION_ACTIVE) {
-        return CIA402_FB_STATUS_ERROR;
-    }
-
-    switch (state) {
-        case CIA402_AXIS_STATE_SWITCH_ON_DISABLED:
-            output->controlword = cia402_controlword_shutdown();
-            return CIA402_FB_STATUS_BUSY;
-        case CIA402_AXIS_STATE_READY_TO_SWITCH_ON:
-            output->controlword = cia402_controlword_switch_on();
-            return CIA402_FB_STATUS_BUSY;
-        case CIA402_AXIS_STATE_SWITCHED_ON:
-            output->controlword = cia402_controlword_enable_operation();
-            return CIA402_FB_STATUS_BUSY;
-        case CIA402_AXIS_STATE_OPERATION_ENABLED:
-            output->controlword = cia402_controlword_enable_operation();
-            return CIA402_FB_STATUS_DONE;
-        case CIA402_AXIS_STATE_QUICK_STOP_ACTIVE:
-            output->controlword = cia402_controlword_disable_operation();
-            return CIA402_FB_STATUS_BUSY;
-        case CIA402_AXIS_STATE_NOT_READY_TO_SWITCH_ON:
-        case CIA402_AXIS_STATE_UNKNOWN:
-        default:
-            output->controlword = cia402_controlword_disable_voltage();
-            return CIA402_FB_STATUS_BUSY;
-    }
-}
-
-cia402_fb_status_t cia402_clear_axis_error(
-    const cia402_axis_input_t *input,
-    cia402_axis_output_t *output) {
-    if (is_null(input) || is_null(output)) {
-        return CIA402_FB_STATUS_ERROR;
-    }
-
-    const cia402_axis_state_t state = cia402_get_axis_state(input);
-    if (state == CIA402_AXIS_STATE_FAULT) {
-        output->controlword = cia402_controlword_fault_reset();
-        return CIA402_FB_STATUS_BUSY;
-    }
-    if (state == CIA402_AXIS_STATE_FAULT_REACTION_ACTIVE) {
-        output->controlword = cia402_controlword_disable_voltage();
-        return CIA402_FB_STATUS_BUSY;
-    }
-
-    output->controlword = cia402_controlword_disable_voltage();
-    return CIA402_FB_STATUS_DONE;
-}
-
-cia402_fb_status_t cia402_switch_mode(const cia402_axis_input_t *input,
-                                      cia402_axis_output_t *output,
-                                      cia402_axis_mode_t target_mode) {
-    if (is_null(input) || is_null(output)) {
-        return CIA402_FB_STATUS_ERROR;
-    }
-
-    output->mode = static_cast<int8_t>(target_mode);
-    if (input->mode_display == target_mode) {
-        return CIA402_FB_STATUS_DONE;
-    }
-    return CIA402_FB_STATUS_BUSY;
-}
-
-cia402_fb_status_t cia402_homing(const cia402_axis_input_t *input,
-                                 cia402_axis_output_t *output,
-                                 int start) {
-    if (is_null(input) || is_null(output)) {
-        return CIA402_FB_STATUS_ERROR;
-    }
-
-    output->mode = CIA402_AXIS_MODE_HOMING;
-
-    if (!start) {
-        output->controlword = clear_homing_start(output->controlword);
-        return CIA402_FB_STATUS_DONE;
-    }
-
-    const cia402_axis_homing_state_t homing_state =
-        cia402_get_axis_homing_state(input);
-    if (homing_state == CIA402_AXIS_HOMING_STATE_ERROR) {
-        output->controlword = clear_homing_start(output->controlword);
-        return CIA402_FB_STATUS_ERROR;
-    }
-    if (homing_state == CIA402_AXIS_HOMING_STATE_ATTAINED) {
-        output->controlword = clear_homing_start(
-            cia402_controlword_enable_operation());
-        return CIA402_FB_STATUS_DONE;
-    }
-
-    if (input->mode_display != CIA402_AXIS_MODE_HOMING) {
-        output->controlword = clear_homing_start(output->controlword);
-        return CIA402_FB_STATUS_BUSY;
-    }
-
-    const cia402_fb_status_t power_status =
-        cia402_power_axis(input, output, 1);
-    if (power_status == CIA402_FB_STATUS_ERROR) {
-        return CIA402_FB_STATUS_ERROR;
-    }
-    if (power_status == CIA402_FB_STATUS_BUSY) {
-        output->controlword = clear_homing_start(output->controlword);
-        return CIA402_FB_STATUS_BUSY;
-    }
-
-    output->controlword = set_homing_start(output->controlword);
-    return CIA402_FB_STATUS_BUSY;
-}
-
-}  // extern "C"
+}  // namespace cia402
