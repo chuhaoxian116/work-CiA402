@@ -1,0 +1,8 @@
+build/
+cmake-build-*/
+*.so
+*.so.*
+*.a
+*.o
+*.dll
+*.dylib
