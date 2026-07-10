@@ -87,8 +87,7 @@ class ClearAxisError {
 
 class SwitchMode {
  public:
-  FbStatus Update(const AxisInput& input,
-                  AxisOutput& output,
+  FbStatus Update(const AxisInput& input, AxisOutput& output,
                   AxisMode target_mode);
 };
 

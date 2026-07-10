@@ -29,9 +29,7 @@ uint16_t SetHomingStart(uint16_t controlword) {
 
 }  // namespace
 
-const char* Version() {
-  return "0.3.0";
-}
+const char* Version() { return "0.3.0"; }
 
 AxisState GetAxisState(const AxisInput& input) {
   return GetAxisStateFromStatusword(input.statusword);
@@ -192,8 +190,7 @@ bool IsModeReached(const AxisInput& input, AxisMode target_mode) {
   return input.mode_display == static_cast<int8_t>(target_mode);
 }
 
-FbStatus PowerAxis::Update(const AxisInput& input,
-                           AxisOutput& output,
+FbStatus PowerAxis::Update(const AxisInput& input, AxisOutput& output,
                            bool enable) {
   const AxisState state = GetAxisState(input);
 
@@ -203,8 +200,7 @@ FbStatus PowerAxis::Update(const AxisInput& input,
                                                  : FbStatus::kDone;
   }
 
-  if (state == AxisState::kFault ||
-      state == AxisState::kFaultReactionActive) {
+  if (state == AxisState::kFault || state == AxisState::kFaultReactionActive) {
     return FbStatus::kError;
   }
 
@@ -252,8 +248,7 @@ FbStatus ClearAxisError::Update(const AxisInput& input, AxisOutput& output) {
   return FbStatus::kDone;
 }
 
-FbStatus SwitchMode::Update(const AxisInput& input,
-                            AxisOutput& output,
+FbStatus SwitchMode::Update(const AxisInput& input, AxisOutput& output,
                             AxisMode target_mode) {
   output.mode = static_cast<int8_t>(target_mode);
 
@@ -263,8 +258,7 @@ FbStatus SwitchMode::Update(const AxisInput& input,
   return FbStatus::kBusy;
 }
 
-FbStatus Homing::Update(const AxisInput& input,
-                        AxisOutput& output,
+FbStatus Homing::Update(const AxisInput& input, AxisOutput& output,
                         bool start) {
   output.mode = static_cast<int8_t>(AxisMode::kHoming);
 
