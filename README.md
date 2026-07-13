@@ -10,11 +10,11 @@
 
 它不负责运动控制，不负责 EtherCAT 主站，也不负责日志打印。
 
-后续交付给使用者时，可以只输出：
+公开头文件和动态库统一保存在 `sdk` 子仓库，交付给使用者时只需要：
 
-- `libcia402.so`
-- `include/cia402/cia402.h`
-- `README.md`
+- `sdk/lib/libcia402.so`
+- `sdk/include/cia402/cia402.h`
+- `sdk/README.md`
 
 ## 工程结构
 
@@ -23,12 +23,18 @@ CiA402/
   CMakeLists.txt
   NAMING_STYLE.md
   .clang-format
-  include/cia402/
-    cia402.h
   src/
     cia402.cpp
   examples/
     basic_usage.cpp
+  sdk/                       # work-CiA402-SDK 子仓库
+    include/cia402/
+      cia402.h               # 唯一的公开 API 头文件
+    lib/
+      libcia402.so
+      libcia402.so.0
+      libcia402.so.0.6.0
+    README.md
 ```
 
 命名和格式统一参考 [NAMING_STYLE.md](/home/js/ETCAT/CiA402/NAMING_STYLE.md)。
@@ -39,6 +45,13 @@ CiA402/
 cd /home/js/ETCAT/CiA402
 cmake -S . -B build -DCIA402_BUILD_SHARED=ON
 cmake --build build
+```
+
+编译生成的动态库及其版本软链接只会输出到 `sdk/lib`。首次克隆源码仓库后，
+需要先初始化 SDK 子模块：
+
+```bash
+git submodule update --init --recursive
 ```
 
 ## 最小 PDO 数据
