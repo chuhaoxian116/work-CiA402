@@ -135,7 +135,8 @@ AxisState GetAxisState(AxisData& axis);
 AxisHomingState GetAxisHomingState(AxisData& axis);
 
 FbStatus ClearAxisError(AxisData& axis);
-FbStatus Homing(AxisData& axis, bool start);
+FbStatus Homing(AxisData& axis, bool start,
+                bool require_operation_enabled = false);
 FbStatus PowerAxis(AxisData& axis, bool enable);
 FbStatus SwitchMode(AxisData& axis, AxisMode target_mode);
 ```
@@ -150,6 +151,19 @@ FbStatus SwitchMode(AxisData& axis, AxisMode target_mode);
 ```
 
 它们不会阻塞，不会 sleep，不会访问 IgH/SOEM，也不会直接读写 PDO 内存。
+
+### Homing 接口边界
+
+`Homing()` 只负责 0x6040 controlword 的 Homing start 位和 0x6041
+statusword 的回零状态判断：
+
+- 不负责切换到 Homing 模式；
+- 不负责回零结束后切回位置模式；
+- 当 0x6061 mode display 不是 Homing 时返回 `kError`；
+- 是否要求轴已经 Operation enabled 由 `require_operation_enabled` 入参决定。
+
+推荐流程是上层先调用 `SwitchMode(axis, AxisMode::kHoming)`，确认模式反馈到位后，
+再周期调用 `Homing(axis, true, ...)`。
 
 ## 使用示例
 

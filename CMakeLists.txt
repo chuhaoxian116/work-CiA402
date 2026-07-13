@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(cia402
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "Generic CiA 402 helper library"
     LANGUAGES CXX
 )

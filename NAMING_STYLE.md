@@ -51,7 +51,8 @@ AxisState GetAxisState(AxisData& axis);
 AxisHomingState GetAxisHomingState(AxisData& axis);
 
 FbStatus ClearAxisError(AxisData& axis);
-FbStatus Homing(AxisData& axis, bool start);
+FbStatus Homing(AxisData& axis, bool start,
+                bool require_operation_enabled = false);
 FbStatus PowerAxis(AxisData& axis, bool enable);
 FbStatus SwitchMode(AxisData& axis, AxisMode target_mode);
 
