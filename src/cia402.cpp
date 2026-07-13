@@ -24,7 +24,7 @@ constexpr uint16_t kEnableOperationBit = 0x0008;     // bit3: enable operation�
 constexpr uint16_t kHomingStartBit = 0x0010;         // bit4: homing start。
 constexpr uint16_t kFaultResetBit = 0x0080;          // bit7: fault reset。
 
-}
+}  // namespace controlword
 
 // 0x6041 Statusword 回零状态解码常量。
 namespace homing_status {
@@ -37,12 +37,11 @@ constexpr uint16_t kFinished = 0x1400;              // 回零完成。
 constexpr uint16_t kErrorVelocityNotZero = 0x2000;  // 回零错误：速度未归零。
 constexpr uint16_t kError = 0x2400;                 // 回零错误。
 
-}
+}  // namespace homing_status
 
 // 清除 homing start 位，保留 controlword 其他位。
 uint16_t ClearHomingStart(uint16_t controlword) {
-  return static_cast<uint16_t>(controlword &
-                               ~controlword::kHomingStartBit);
+  return static_cast<uint16_t>(controlword & ~controlword::kHomingStartBit);
 }
 
 // 置位 homing start 位，保留 controlword 其他位。
@@ -110,9 +109,11 @@ AxisHomingState DecodeAxisHomingState(uint16_t statusword) {
   return AxisHomingState::kUnknown;
 }
 
-}
+}  // namespace
 
-const char* Version() { return "0.6.0"; }
+const char* Version() {
+  return "0.6.0";
+}
 
 AxisState GetAxisState(AxisData& axis) {
   // 缓存本周期状态解析结果，便于上层或后续函数复用。
@@ -126,22 +127,22 @@ AxisHomingState GetAxisHomingState(AxisData& axis) {
   return axis.homingState;
 }
 
-FbStatus ClearAxisError(AxisData& axis) {
-  // 先基于最新 Statusword 刷新轴状态。
+FbStatus ClearAxisError(AxisData& axis, bool execute) {
+  // 未请求清错时主动撤销 bit7，为下一次清错准备上升沿。
+  if (!execute) {
+    axis.outData.controlword = ClearFaultReset(axis.outData.controlword);
+    return FbStatus::kDone;
+  }
+
   const AxisState state = GetAxisState(axis);
 
-  // 只有故障态和故障响应态需要持续输出 fault reset。
-  if (state == AxisState::kFault) {
+  // 请求清错时，故障相关状态持续下发 fault reset。
+  if (state == AxisState::kFault || state == AxisState::kFaultReactionActive) {
     axis.outData.controlword = controlword::kFaultReset;
     return FbStatus::kBusy;
   }
 
-  if (state == AxisState::kFaultReactionActive) {
-    axis.outData.controlword = controlword::kFaultReset;
-    return FbStatus::kBusy;
-  }
-
-  // 非故障态清除 fault reset 位，避免复位位长期保持。
+  // 已经离开故障状态，撤销 fault reset。
   axis.outData.controlword = ClearFaultReset(axis.outData.controlword);
   return FbStatus::kDone;
 }
@@ -154,8 +155,7 @@ FbStatus Homing(AxisData& axis, bool start, bool require_operation_enabled) {
   }
 
   // 是否必须在 Operation enabled 状态下回零由调用者决定。
-  if (require_operation_enabled &&
-      GetAxisState(axis) != AxisState::kOperationEnabled) {
+  if (require_operation_enabled && GetAxisState(axis) != AxisState::kOperationEnabled) {
     axis.outData.controlword = ClearHomingStart(axis.outData.controlword);
     return FbStatus::kError;
   }
@@ -199,10 +199,10 @@ FbStatus PowerAxis(AxisData& axis, bool enable) {
     switch (state) {
       case AxisState::kOperationEnabled:
         // Operation enabled 下撤销 quick stop 位，进入快停/停机路径。
-        axis.outData.controlword = static_cast<uint16_t>(
-            axis.outData.controlword & controlword::kClearQuickStopBitMask);
-        axis.outData.controlword = static_cast<uint16_t>(
-            axis.outData.controlword | controlword::kEnableVoltageBit);
+        axis.outData.controlword =
+            static_cast<uint16_t>(axis.outData.controlword & controlword::kClearQuickStopBitMask);
+        axis.outData.controlword =
+            static_cast<uint16_t>(axis.outData.controlword | controlword::kEnableVoltageBit);
         return FbStatus::kBusy;
       case AxisState::kSwitchOnDisabled:
         // 已经进入禁止上电状态后，清空控制字并认为断使能完成。
@@ -211,8 +211,8 @@ FbStatus PowerAxis(AxisData& axis, bool enable) {
       case AxisState::kFault:
       case AxisState::kFaultReactionActive:
         // 故障相关状态下不强行清零，只保持 enable voltage 位等待状态变化。
-        axis.outData.controlword = static_cast<uint16_t>(
-            axis.outData.controlword | controlword::kEnableVoltageBit);
+        axis.outData.controlword =
+            static_cast<uint16_t>(axis.outData.controlword | controlword::kEnableVoltageBit);
         return FbStatus::kBusy;
       case AxisState::kReadyToSwitchOn:
       case AxisState::kSwitchedOn:
@@ -229,29 +229,25 @@ FbStatus PowerAxis(AxisData& axis, bool enable) {
     case AxisState::kSwitchOnDisabled:
       // 请求 Shutdown：enable voltage + quick stop。
       axis.outData.controlword = static_cast<uint16_t>(
-          axis.outData.controlword &
-          controlword::kClearSwitchOnAndFaultResetMask);
+          axis.outData.controlword & controlword::kClearSwitchOnAndFaultResetMask);
       axis.outData.controlword = static_cast<uint16_t>(
-          axis.outData.controlword | controlword::kEnableVoltageBit |
-          controlword::kQuickStopBit);
+          axis.outData.controlword | controlword::kEnableVoltageBit | controlword::kQuickStopBit);
       return FbStatus::kBusy;
     case AxisState::kReadyToSwitchOn:
       // 请求 Switch on：补齐 switch on 位。
       axis.outData.controlword = static_cast<uint16_t>(
-          axis.outData.controlword &
-          controlword::kClearEnableOperationAndFaultResetMask);
-      axis.outData.controlword = static_cast<uint16_t>(
-          axis.outData.controlword | controlword::kSwitchOnBit |
-          controlword::kEnableVoltageBit | controlword::kQuickStopBit);
+          axis.outData.controlword & controlword::kClearEnableOperationAndFaultResetMask);
+      axis.outData.controlword =
+          static_cast<uint16_t>(axis.outData.controlword | controlword::kSwitchOnBit |
+                                controlword::kEnableVoltageBit | controlword::kQuickStopBit);
       return FbStatus::kBusy;
     case AxisState::kSwitchedOn:
       // 请求 Enable operation：补齐 enable operation 位。
+      axis.outData.controlword =
+          static_cast<uint16_t>(axis.outData.controlword & controlword::kClearFaultResetMask);
       axis.outData.controlword = static_cast<uint16_t>(
-          axis.outData.controlword & controlword::kClearFaultResetMask);
-      axis.outData.controlword = static_cast<uint16_t>(
-          axis.outData.controlword | controlword::kSwitchOnBit |
-          controlword::kEnableVoltageBit | controlword::kQuickStopBit |
-          controlword::kEnableOperationBit);
+          axis.outData.controlword | controlword::kSwitchOnBit | controlword::kEnableVoltageBit |
+          controlword::kQuickStopBit | controlword::kEnableOperationBit);
       return FbStatus::kBusy;
     case AxisState::kOperationEnabled:
       // 已经使能完成，不再改写控制字。
@@ -278,4 +274,4 @@ FbStatus SwitchMode(AxisData& axis, AxisMode target_mode) {
   return FbStatus::kBusy;
 }
 
-}
+}  // namespace cia402
