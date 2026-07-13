@@ -1,28 +1,29 @@
-#include <cstdint>
-#include <iostream>
-
 #include "cia402/cia402.h"
 
 int main() {
-  cia402::AxisInput input{};
-  input.statusword = 0x0040;  // Switch on disabled
-  input.mode_display = static_cast<int8_t>(cia402::AxisMode::kNone);
+  cia402::AxisData axis{};
+  axis.inData.statusword = 0x0040;
+  axis.inData.mode_display = static_cast<int8_t>(cia402::AxisMode::kHoming);
 
-  cia402::AxisOutput output{};
+  if (cia402::GetAxisState(axis) != cia402::AxisState::kSwitchOnDisabled) {
+    return 1;
+  }
 
-  std::cout << "state: " << cia402::ToString(cia402::GetAxisState(input))
-            << "\n";
+  if (cia402::PowerAxis(axis, true) != cia402::FbStatus::kBusy) {
+    return 2;
+  }
+  if (axis.outData.controlword != 0x0006) {
+    return 3;
+  }
 
-  cia402::PowerAxis power_axis;
-  const cia402::FbStatus power_status = power_axis.Update(input, output, true);
-  std::cout << "power status: " << cia402::ToString(power_status)
-            << ", controlword: 0x" << std::hex << output.controlword << "\n";
-
-  cia402::SwitchMode switch_mode;
-  const cia402::FbStatus mode_status =
-      switch_mode.Update(input, output, cia402::AxisMode::kCyclicSyncPosition);
-  std::cout << "switch mode status: " << cia402::ToString(mode_status)
-            << ", mode: " << std::dec << static_cast<int>(output.mode) << "\n";
+  if (cia402::SwitchMode(axis, cia402::AxisMode::kCyclicSynchronousPosition) !=
+      cia402::FbStatus::kBusy) {
+    return 4;
+  }
+  if (axis.outData.mode !=
+      static_cast<int8_t>(cia402::AxisMode::kCyclicSynchronousPosition)) {
+    return 5;
+  }
 
   return 0;
 }

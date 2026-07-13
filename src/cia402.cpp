@@ -3,15 +3,25 @@
 namespace cia402 {
 namespace {
 
+/**
+ * @brief Homing 模式下，0x6040 bit4 用作 homing start。
+ */
 constexpr uint16_t kControlwordHomingStartBit = 0x0010;
 
-constexpr uint16_t kStatuswordFaultBit = 0x0008;
-constexpr uint16_t kStatuswordWarningBit = 0x0080;
-constexpr uint16_t kStatuswordRemoteBit = 0x0200;
-constexpr uint16_t kStatuswordTargetReachedBit = 0x0400;
-constexpr uint16_t kStatuswordHomingAttainedBit = 0x1000;
-constexpr uint16_t kStatuswordHomingErrorBit = 0x2000;
+/**
+ * @brief 回零状态解码规则与当前 PLC 参考实现一致：statusword & 0x3400。
+ */
+constexpr uint16_t kStatuswordHomingMask = 0x3400;
+constexpr uint16_t kStatuswordHomingInProgress = 0x0000;
+constexpr uint16_t kStatuswordHomingInterrupted = 0x0400;
+constexpr uint16_t kStatuswordHomingAttainedAndNoTarget = 0x1000;
+constexpr uint16_t kStatuswordHomingFinished = 0x1400;
+constexpr uint16_t kStatuswordHomingErrorVelocityNotZero = 0x2000;
+constexpr uint16_t kStatuswordHomingError = 0x2400;
 
+/**
+ * @brief 状态机内部使用的标准 CiA402 控制字。
+ */
 constexpr uint16_t kControlwordDisableVoltage = 0x0000;
 constexpr uint16_t kControlwordShutdown = 0x0006;
 constexpr uint16_t kControlwordSwitchOn = 0x0007;
@@ -19,28 +29,37 @@ constexpr uint16_t kControlwordEnableOperation = 0x000F;
 constexpr uint16_t kControlwordDisableOperation = 0x0007;
 constexpr uint16_t kControlwordFaultReset = 0x0080;
 
+/**
+ * @brief 清除 homing start 位，保留 controlword 其他位。
+ *
+ * @param controlword 当前控制字。
+ * @return uint16_t 清除 homing start 位后的控制字。
+ */
 uint16_t ClearHomingStart(uint16_t controlword) {
   return static_cast<uint16_t>(controlword & ~kControlwordHomingStartBit);
 }
 
+/**
+ * @brief 置位 homing start 位，保留 controlword 其他位。
+ *
+ * @param controlword 当前控制字。
+ * @return uint16_t 置位 homing start 位后的控制字。
+ */
 uint16_t SetHomingStart(uint16_t controlword) {
   return static_cast<uint16_t>(controlword | kControlwordHomingStartBit);
 }
 
-}  // namespace
-
-const char* Version() { return "0.3.0"; }
-
-AxisState GetAxisState(const AxisInput& input) {
-  return GetAxisStateFromStatusword(input.statusword);
-}
-
-AxisState GetAxisStateFromStatusword(uint16_t statusword) {
+/**
+ * @brief 从 Statusword 解码 CiA402 状态机状态。
+ *
+ * 掩码和比较值来自 CiA402 标准状态字模式。
+ *
+ * @param statusword 0x6041 Statusword。
+ * @return AxisState 解码后的 CiA402 状态。
+ */
+AxisState DecodeAxisState(uint16_t statusword) {
   const uint16_t masked = statusword & 0x006F;
 
-  if (masked == 0x0000) {
-    return AxisState::kNotReadyToSwitchOn;
-  }
   if ((statusword & 0x004F) == 0x0040) {
     return AxisState::kSwitchOnDisabled;
   }
@@ -62,238 +81,211 @@ AxisState GetAxisStateFromStatusword(uint16_t statusword) {
   if ((statusword & 0x004F) == 0x0008) {
     return AxisState::kFault;
   }
+  if ((statusword & 0x004F) == 0x0000) {
+    return AxisState::kNotReadyToSwitchOn;
+  }
 
   return AxisState::kUnknown;
 }
 
-AxisHomingState GetAxisHomingState(const AxisInput& input) {
-  if (input.mode_display != static_cast<int8_t>(AxisMode::kHoming)) {
-    return AxisHomingState::kNotHomingMode;
-  }
-  if ((input.statusword & kStatuswordHomingErrorBit) != 0) {
-    return AxisHomingState::kError;
-  }
-  if ((input.statusword & kStatuswordHomingAttainedBit) != 0) {
-    return AxisHomingState::kAttained;
-  }
-  if ((input.statusword & kStatuswordTargetReachedBit) == 0) {
-    return AxisHomingState::kRunning;
-  }
-  return AxisHomingState::kNotStarted;
-}
-
-const char* ToString(AxisMode mode) {
-  switch (mode) {
-    case AxisMode::kNone:
-      return "No mode";
-    case AxisMode::kProfilePosition:
-      return "Profile position";
-    case AxisMode::kVelocity:
-      return "Velocity";
-    case AxisMode::kProfileVelocity:
-      return "Profile velocity";
-    case AxisMode::kProfileTorque:
-      return "Profile torque";
-    case AxisMode::kHoming:
-      return "Homing";
-    case AxisMode::kInterpolatedPosition:
-      return "Interpolated position";
-    case AxisMode::kCyclicSyncPosition:
-      return "Cyclic synchronous position";
-    case AxisMode::kCyclicSyncVelocity:
-      return "Cyclic synchronous velocity";
-    case AxisMode::kCyclicSyncTorque:
-      return "Cyclic synchronous torque";
+/**
+ * @brief 从 Statusword 解码回零状态。
+ *
+ * 这里故意不检查 mode_display，以保持和 PLC 参考函数一致。
+ *
+ * @param statusword 0x6041 Statusword。
+ * @return AxisHomingState 解码后的回零状态。
+ */
+AxisHomingState DecodeAxisHomingState(uint16_t statusword) {
+  switch (statusword & kStatuswordHomingMask) {
+    case kStatuswordHomingInProgress:
+      return AxisHomingState::kHomingInProgress;
+    case kStatuswordHomingInterrupted:
+      return AxisHomingState::kHomingInterrupted;
+    case kStatuswordHomingAttainedAndNoTarget:
+      return AxisHomingState::kHomingAttainedAndNoTarget;
+    case kStatuswordHomingFinished:
+      return AxisHomingState::kHomingFinished;
+    case kStatuswordHomingErrorVelocityNotZero:
+      return AxisHomingState::kHomingErrorVelocityNotZero;
+    case kStatuswordHomingError:
+      return AxisHomingState::kHomingError;
   }
 
-  return "Unknown mode";
+  return AxisHomingState::kUnknown;
 }
 
-const char* ToString(AxisState state) {
-  switch (state) {
-    case AxisState::kNotReadyToSwitchOn:
-      return "Not ready to switch on";
-    case AxisState::kSwitchOnDisabled:
-      return "Switch on disabled";
-    case AxisState::kReadyToSwitchOn:
-      return "Ready to switch on";
-    case AxisState::kSwitchedOn:
-      return "Switched on";
-    case AxisState::kOperationEnabled:
-      return "Operation enabled";
-    case AxisState::kQuickStopActive:
-      return "Quick stop active";
-    case AxisState::kFaultReactionActive:
-      return "Fault reaction active";
-    case AxisState::kFault:
-      return "Fault";
-    case AxisState::kUnknown:
-      return "Unknown";
-  }
-
-  return "Unknown";
 }
 
-const char* ToString(AxisHomingState state) {
-  switch (state) {
-    case AxisHomingState::kNotHomingMode:
-      return "Not homing mode";
-    case AxisHomingState::kNotStarted:
-      return "Not started";
-    case AxisHomingState::kRunning:
-      return "Running";
-    case AxisHomingState::kAttained:
-      return "Attained";
-    case AxisHomingState::kError:
-      return "Error";
-    case AxisHomingState::kUnknown:
-      return "Unknown";
-  }
+const char* Version() { return "0.5.0"; }
 
-  return "Unknown";
+AxisState GetAxisState(AxisData& axis) {
+  /**
+   * @brief 缓存解码结果，避免上层重复解析同一个 statusword。
+   */
+  axis.axisState = DecodeAxisState(axis.inData.statusword);
+  return axis.axisState;
 }
 
-const char* ToString(FbStatus status) {
-  switch (status) {
-    case FbStatus::kDone:
-      return "Done";
-    case FbStatus::kBusy:
-      return "Busy";
-    case FbStatus::kError:
-      return "Error";
-  }
-
-  return "Error";
+AxisHomingState GetAxisHomingState(AxisData& axis) {
+  /**
+   * @brief 缓存回零状态，便于上层直接读取 axis.homingState。
+   */
+  axis.homingState = DecodeAxisHomingState(axis.inData.statusword);
+  return axis.homingState;
 }
 
-bool IsFault(const AxisInput& input) {
-  return (input.statusword & kStatuswordFaultBit) != 0;
-}
+FbStatus ClearAxisError(AxisData& axis) {
+  const AxisState state = GetAxisState(axis);
 
-bool IsWarning(const AxisInput& input) {
-  return (input.statusword & kStatuswordWarningBit) != 0;
-}
-
-bool IsRemote(const AxisInput& input) {
-  return (input.statusword & kStatuswordRemoteBit) != 0;
-}
-
-bool IsOperationEnabled(const AxisInput& input) {
-  return GetAxisState(input) == AxisState::kOperationEnabled;
-}
-
-bool IsTargetReached(const AxisInput& input) {
-  return (input.statusword & kStatuswordTargetReachedBit) != 0;
-}
-
-bool IsModeReached(const AxisInput& input, AxisMode target_mode) {
-  return input.mode_display == static_cast<int8_t>(target_mode);
-}
-
-FbStatus PowerAxis::Update(const AxisInput& input, AxisOutput& output,
-                           bool enable) {
-  const AxisState state = GetAxisState(input);
-
-  if (!enable) {
-    output.controlword = kControlwordDisableOperation;
-    return state == AxisState::kOperationEnabled ? FbStatus::kBusy
-                                                 : FbStatus::kDone;
-  }
-
-  if (state == AxisState::kFault || state == AxisState::kFaultReactionActive) {
-    return FbStatus::kError;
-  }
-
-  switch (state) {
-    case AxisState::kSwitchOnDisabled:
-      output.controlword = kControlwordShutdown;
-      return FbStatus::kBusy;
-    case AxisState::kReadyToSwitchOn:
-      output.controlword = kControlwordSwitchOn;
-      return FbStatus::kBusy;
-    case AxisState::kSwitchedOn:
-      output.controlword = kControlwordEnableOperation;
-      return FbStatus::kBusy;
-    case AxisState::kOperationEnabled:
-      output.controlword = kControlwordEnableOperation;
-      return FbStatus::kDone;
-    case AxisState::kQuickStopActive:
-      output.controlword = kControlwordDisableOperation;
-      return FbStatus::kBusy;
-    case AxisState::kNotReadyToSwitchOn:
-    case AxisState::kUnknown:
-    case AxisState::kFaultReactionActive:
-    case AxisState::kFault:
-      output.controlword = kControlwordDisableVoltage;
-      return FbStatus::kBusy;
-  }
-
-  output.controlword = kControlwordDisableVoltage;
-  return FbStatus::kBusy;
-}
-
-FbStatus ClearAxisError::Update(const AxisInput& input, AxisOutput& output) {
-  const AxisState state = GetAxisState(input);
-
+  /**
+   * @brief Fault 状态下输出 fault reset，等待驱动器离开 Fault。
+   */
   if (state == AxisState::kFault) {
-    output.controlword = kControlwordFaultReset;
-    return FbStatus::kBusy;
-  }
-  if (state == AxisState::kFaultReactionActive) {
-    output.controlword = kControlwordDisableVoltage;
+    axis.outData.controlword = kControlwordFaultReset;
     return FbStatus::kBusy;
   }
 
-  output.controlword = kControlwordDisableVoltage;
+  /**
+   * @brief Fault reaction active 还不是可复位状态，先保持断电压。
+   */
+  if (state == AxisState::kFaultReactionActive) {
+    axis.outData.controlword = kControlwordDisableVoltage;
+    return FbStatus::kBusy;
+  }
+
+  /**
+   * @brief 已不在故障状态。
+   */
+  axis.outData.controlword = kControlwordDisableVoltage;
   return FbStatus::kDone;
 }
 
-FbStatus SwitchMode::Update(const AxisInput& input, AxisOutput& output,
-                            AxisMode target_mode) {
-  output.mode = static_cast<int8_t>(target_mode);
-
-  if (IsModeReached(input, target_mode)) {
-    return FbStatus::kDone;
-  }
-  return FbStatus::kBusy;
-}
-
-FbStatus Homing::Update(const AxisInput& input, AxisOutput& output,
-                        bool start) {
-  output.mode = static_cast<int8_t>(AxisMode::kHoming);
+FbStatus Homing(AxisData& axis, bool start) {
+  /**
+   * @brief Homing 函数始终请求 0x6060 = Homing。
+   */
+  axis.outData.mode = static_cast<int8_t>(AxisMode::kHoming);
 
   if (!start) {
-    output.controlword = ClearHomingStart(output.controlword);
+    /**
+     * @brief 停止请求只清除 homing start 位。
+     */
+    axis.outData.controlword = ClearHomingStart(axis.outData.controlword);
     return FbStatus::kDone;
   }
 
-  const AxisHomingState homing_state = GetAxisHomingState(input);
-  if (homing_state == AxisHomingState::kError) {
-    output.controlword = ClearHomingStart(output.controlword);
+  const AxisHomingState homing_state = GetAxisHomingState(axis);
+
+  /**
+   * @brief 回零错误直接返回 kError，具体错误日志交给上层。
+   */
+  if (homing_state == AxisHomingState::kHomingError ||
+      homing_state == AxisHomingState::kHomingErrorVelocityNotZero) {
+    axis.outData.controlword = ClearHomingStart(axis.outData.controlword);
     return FbStatus::kError;
   }
-  if (homing_state == AxisHomingState::kAttained) {
-    output.controlword = ClearHomingStart(kControlwordEnableOperation);
+
+  /**
+   * @brief PLC 参考实现中，0x1400 表示回零完成。
+   */
+  if (homing_state == AxisHomingState::kHomingFinished) {
+    axis.outData.controlword = ClearHomingStart(kControlwordEnableOperation);
     return FbStatus::kDone;
   }
 
-  if (!IsModeReached(input, AxisMode::kHoming)) {
-    output.controlword = ClearHomingStart(output.controlword);
+  /**
+   * @brief 等待驱动器通过 0x6061 确认已经进入 Homing 模式。
+   */
+  if (axis.inData.mode_display != static_cast<int8_t>(AxisMode::kHoming)) {
+    axis.outData.controlword = ClearHomingStart(axis.outData.controlword);
     return FbStatus::kBusy;
   }
 
-  PowerAxis power_axis;
-  const FbStatus power_status = power_axis.Update(input, output, true);
+  /**
+   * @brief 回零启动前必须先使能到 Operation enabled。
+   */
+  const FbStatus power_status = PowerAxis(axis, true);
   if (power_status == FbStatus::kError) {
     return FbStatus::kError;
   }
   if (power_status == FbStatus::kBusy) {
-    output.controlword = ClearHomingStart(output.controlword);
+    axis.outData.controlword = ClearHomingStart(axis.outData.controlword);
     return FbStatus::kBusy;
   }
 
-  output.controlword = SetHomingStart(output.controlword);
+  /**
+   * @brief 轴已使能且处于 Homing 模式，置位 homing start。
+   */
+  axis.outData.controlword = SetHomingStart(axis.outData.controlword);
   return FbStatus::kBusy;
 }
 
-}  // namespace cia402
+FbStatus PowerAxis(AxisData& axis, bool enable) {
+  const AxisState state = GetAxisState(axis);
+
+  if (!enable) {
+    /**
+     * @brief 请求断使能，直到驱动器不再反馈 Operation enabled。
+     */
+    axis.outData.controlword = kControlwordDisableOperation;
+    return state == AxisState::kOperationEnabled ? FbStatus::kBusy
+                                                 : FbStatus::kDone;
+  }
+
+  /**
+   * @brief 故障状态不直接使能，必须由上层先调用 ClearAxisError()。
+   */
+  if (state == AxisState::kFault || state == AxisState::kFaultReactionActive) {
+    return FbStatus::kError;
+  }
+
+  /**
+   * @brief 标准 CiA402 使能序列。
+   */
+  switch (state) {
+    case AxisState::kSwitchOnDisabled:
+      axis.outData.controlword = kControlwordShutdown;
+      return FbStatus::kBusy;
+    case AxisState::kReadyToSwitchOn:
+      axis.outData.controlword = kControlwordSwitchOn;
+      return FbStatus::kBusy;
+    case AxisState::kSwitchedOn:
+      axis.outData.controlword = kControlwordEnableOperation;
+      return FbStatus::kBusy;
+    case AxisState::kOperationEnabled:
+      axis.outData.controlword = kControlwordEnableOperation;
+      return FbStatus::kDone;
+    case AxisState::kQuickStopActive:
+      axis.outData.controlword = kControlwordDisableOperation;
+      return FbStatus::kBusy;
+    case AxisState::kFaultReactionActive:
+    case AxisState::kFault:
+    case AxisState::kNotReadyToSwitchOn:
+    case AxisState::kUnknown:
+      axis.outData.controlword = kControlwordDisableVoltage;
+      return FbStatus::kBusy;
+  }
+
+  /**
+   * @brief 理论不可达，保守输出断电压。
+   */
+  axis.outData.controlword = kControlwordDisableVoltage;
+  return FbStatus::kBusy;
+}
+
+FbStatus SwitchMode(AxisData& axis, AxisMode target_mode) {
+  /**
+   * @brief 这里只请求目标模式并等待 mode_display 到位。
+   *
+   * 是否需要先断使能由上层或厂商适配层决定。
+   */
+  axis.outData.mode = static_cast<int8_t>(target_mode);
+
+  if (axis.inData.mode_display == static_cast<int8_t>(target_mode)) {
+    return FbStatus::kDone;
+  }
+  return FbStatus::kBusy;
+}
+
+}
